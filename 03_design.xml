@@ -1,0 +1,332 @@
+<ROSETTASCRIPTS>
+
+    # Script to redesign poses from hbSearch
+    # keeps HBNet positions fixed, but designs around these.
+    # will try to place Phe on helix D
+        
+      <SCOREFXNS>
+        <ScoreFunction name="sfxn_16" weights="beta_nov16"  symmetric="0"/>           # scorefxn for minimization
+        <ScoreFunction name="sfxn_design" weights="beta_nov16"  symmetric="0">        # scorefxn for design
+          <Reweight scoretype="res_type_constraint" weight="1.5"/>                    # for Structure Profile
+          <Reweight scoretype="aa_composition" weight="1.0"/>                         # to force Phe
+          <Reweight scoretype="hbond_sr_bb" weight="2.0"/>                            # upweight short distance hbonds to protect helical structure
+          <Reweight scoretype="sap_constraint" weight="0.3"/>                         # for sap constraints
+        </ScoreFunction>
+        <ScoreFunction name="sfxn_sap" weights="beta_nov16">
+          <Reweight scoretype="sap_constraint" weight="1.0"/>
+        </ScoreFunction>
+      </SCOREFXNS>
+    
+      <SIMPLE_METRICS>
+        <PerResidueSapScoreMetric name="per_res_sap"/> # needs to be defined before used by residue selector!
+      </SIMPLE_METRICS>
+    
+        <RESIDUE_SELECTORS>
+        #### helix selectors
+        <SSElement name="A" selection="1,H"/> 
+        <SSElement name="B" selection="2,H"/> 
+        <SSElement name="C" selection="3,H"/> 
+        <SSElement name="D" selection="4,H"/>
+    
+        #### Layer Design (from Basile)
+        <Layer name="surface" select_core="false" select_boundary="false" select_surface="true" use_sidechain_neighbors="true" core_cutoff="3.9" surface_cutoff="2.9"/>
+            <Layer name="boundary" select_core="false" select_boundary="true" select_surface="false" use_sidechain_neighbors="true" core_cutoff="3.9" surface_cutoff="2.9"/>
+            <Layer name="core" select_core="true" select_boundary="false" select_surface="false" use_sidechain_neighbors="true" core_cutoff="3.9" surface_cutoff="2.9"/>
+        <Not name="not_core" selector="core"/>
+    
+            <SecondaryStructure name="entire_helix" overlap="0" minH="3" minE="2" include_terminal_loops="false" use_dssp="true" ss="H" /> entire_helix != helix because of special definitions for caps and first/last residues
+            <SecondaryStructure name="sheet" overlap="0" minH="3" minE="2" include_terminal_loops="false" use_dssp="true" ss="E" />
+            <SecondaryStructure name="entire_loop" overlap="0" minH="3" minE="2" include_terminal_loops="true" use_dssp="true" ss="L" /> entire_loop != loop because of the caps defintion requirements
+    
+            <And name="helix_Ncap" selectors="entire_loop"> # N cap (residue with non-helical phi/psi preceding the first helical residue)
+                <PrimarySequenceNeighborhood lower="1" upper="0" selector="entire_helix"/>
+            </And>
+    
+            <And name="helix_Ccap" selectors="entire_loop"> # C cap (residue with non-helical phi/psi succeding the last helical residue)
+                <PrimarySequenceNeighborhood lower="0" upper="1" selector="entire_helix"/>
+            </And>
+    
+            <And name="helix_N1" selectors="entire_helix"> # First residue at N term of helix after cap (i.e. first residue with alpha right-handed phi/psi angles)
+                <PrimarySequenceNeighborhood lower="0" upper="1" selector="helix_Ncap"/>
+            </And>
+    
+            <And name="helix_C1" selectors="entire_helix"> # Last residue at C term of helix before cap (i.e. last residue with alpha right-handed phi/psi angles)
+                <PrimarySequenceNeighborhood lower="1" upper="0" selector="helix_Ccap"/>
+            </And>
+    
+            <And name="helix" selectors="entire_helix"> # helix without its first and last residues (these are treated differently in DesignRestrictions)
+                <Not selector="helix_N1"/>
+                <Not selector="helix_C1"/>
+            </And>
+    
+            <And name="loop" selectors="entire_loop"> loop without residues that consitute helical caps (these are treated differently in DesignRestrictions)
+                <Not selector="helix_Ncap"/>
+                <Not selector="helix_Ccap"/>
+            </And>
+    
+        #### for constraints
+        <Index name="h1-4" resnums="24,75,127,178"/>
+        <Index name="h1-3" resnums="24,75,127"/>
+        <Index name="h4" resnums="178"/>
+        <Not name="not_D" selector="D"/>
+        
+        #### for Phe placements
+        <And name="B_core" selectors="B,core"/>
+        <And name="D_core" selectors="D,core"/>
+        <InterfaceByVector name="interface" cb_dist_cut="50.0" nearby_atom_cut="8.0" vector_angle_cut="60.0" vector_dist_cut="10.0" grp1_selector="B_core" grp2_selector="D_core"/>
+        <And name="Phe_region" selectors="D,interface"/>
+        
+        #### HBNet
+        <ResiduePDBInfoHasLabel name="hbnet_residues" property="HBNet" />     # to keep HBNet residues fixed
+        <Neighborhood name="around_hbnet" selector="hbnet_residues" distance="5.0" />
+        <Layer name="hbnet_core" select_core="true" select_boundary="false" select_surface="false" use_sidechain_neighbors="true" core_cutoff="3.6" />
+        <And name="core_around_hbnet" selectors="hbnet_core,around_hbnet"/>
+    
+        #### SAP
+        <StoredResidueSubset name="stored_bad_sap" subset_name="bad_sap_stored" />
+        <SimpleMetricSelector name="bad_sap" metric="per_res_sap" lower_bound="1.4" />
+        <Not name="not_stored_bad_sap" selector="stored_bad_sap" />
+    
+        #### hbnet filtering
+        <And name="hbnet_His" selectors="hbnet_residues">
+          <ResidueName residue_name3="HIS" />
+        </And>
+        
+        </RESIDUE_SELECTORS>
+    
+         <TASKOPERATIONS>
+         #### Layer Design restrictions (with adoptions from Basile)
+         <DesignRestrictions name="layer_design"> 
+    
+                <Action selector_logic="surface AND helix_N1"	    aas="KRDEQPG"/>
+                <Action selector_logic="surface AND helix"			aas="KREQ"/>
+                <Action selector_logic="surface AND helix_C1"		aas="KREQNST"/>
+                <Action selector_logic="surface AND sheet"			aas="EKNQRST"/>
+                <Action selector_logic="surface AND loop"			aas="DEGKNPQRST"/>
+    
+                <Action selector_logic="boundary AND helix_N1"		aas="KRDEQAPGLW"/>
+                <Action selector_logic="boundary AND helix"			aas="KREQAVILMW"/>
+                <Action selector_logic="boundary AND helix_C1"		aas="KREQNSTALMW"/>
+                <Action selector_logic="boundary AND sheet"			aas="DEIKLMNQRSTVW"/>
+                <Action selector_logic="boundary AND loop"			aas="ADEGIKLMNPQRSTVW"/>
+    
+                <Action selector_logic="core AND helix_N1"			aas="APGLW"/>
+                <Action selector_logic="core AND helix"				aas="AVILMFW"/>
+                <Action selector_logic="core AND helix_C1"			aas="ALMFW"/>
+                <Action selector_logic="core AND sheet"				aas="FILMVW"/>
+                <Action selector_logic="core AND loop"				aas="AFGILMPVW"/>
+
+                <Action selector_logic="helix_Ncap"					aas="DESTQNGP"/>
+                <Action selector_logic="helix_Ccap"					aas="KSQNAGMFY"/>
+    
+            </DesignRestrictions>
+    
+        #### for design
+        <IncludeCurrent name="current"/>
+        <OperateOnResidueSubset name="lim_to_core" selector="not_core">
+          <PreventRepackingRLT/>
+        </OperateOnResidueSubset>
+        <OperateOnResidueSubset name="lim_to_surf" selector="core">
+          <PreventRepackingRLT/>
+        </OperateOnResidueSubset>
+    
+        #### SAP
+        <OperateOnResidueSubset name="restrict_not_bad_sap" selector="not_stored_bad_sap">
+          <RestrictToRepackingRLT/>
+        </OperateOnResidueSubset>
+    
+        #### HBNet restrictions
+        <OperateOnResidueSubset name="hbnet_task" selector="hbnet_residues">
+          <RestrictToRepackingRLT/> 
+        </OperateOnResidueSubset>
+    
+        #### generic restrictions
+        <LimitAromaChi2 name="limaromchi" chi2max="110" chi2min="70" include_trp="True" />    # limit aromatic chi2 angles
+        <ExtraRotamersGeneric name="ex1_ex2" ex1="1" ex2aro="1" />                            # extra rotamers
+    
+        #### for filters
+        <OperateOnResidueSubset name="calc_D" selector="not_D">
+          <PreventRepackingRLT/>
+        </OperateOnResidueSubset>
+        </TASKOPERATIONS>
+    
+      <MOVERS>
+        #### general
+        <SavePoseMover name="save_start" restore_pose="0" reference_name="pose_start"/>
+    
+        #### design
+        <FastDesign name="design_core" scorefxn="sfxn_design" repeats="3" task_operations="current,limaromchi,hbnet_task,layer_design,lim_to_core"/>
+        <PackRotamersMover name="design_surface" scorefxn="sfxn_design" task_operations="limaromchi,hbnet_task,layer_design,ex1_ex2,lim_to_surf"/>
+        <FastDesign name="design_all" scorefxn="sfxn_design" repeats="2" task_operations="limaromchi,hbnet_task,layer_design"/>
+        <PackRotamersMover name="redesign_bad_sap" scorefxn="sfxn_design" task_operations="restrict_not_bad_sap,hbnet_task,layer_design,limaromchi" />
+    
+        ### SAP
+        <AddSapConstraintMover name="add_sap" speed="lightning" sap_goal="15" penalty_per_sap="1" />
+        <StoreResidueSubset name="store_bad_sap" subset_name="bad_sap_stored" residue_selector="bad_sap" overwrite="1"/>
+        
+        #### constraints
+        <AddHelixSequenceConstraints name="basic_h_cst" residue_selector="h1-4" overall_max_count="6" add_hydrophobic_constraints="false"/>
+        <StructProfileMover name="genProfile" add_csts_to_pose="1" consider_topN_frags="500" eliminate_background="0" ignore_terminal_residue="1" only_loops="0" burialWt="0.4" RMSthreshold="0.6" />
+        <AddCompositionConstraintMover name="Phe_penalty" selector="Phe_region">
+            <Comp entry="PENALTY_DEFINITION;TYPE PHE;DELTA_START -1;DELTA_END 1;PENALTIES 10 0 0 ;ABSOLUTE 3;BEFORE_FUNCTION QUADRATIC;AFTER_FUNCTION LINEAR;END_PENALTY_DEFINITION"/>
+        </AddCompositionConstraintMover>
+        <AddCompositionConstraintMover name="Phe_penalty2" selector="not_D">
+            <Comp entry="PENALTY_DEFINITION;TYPE PHE;DELTA_START -1;DELTA_END 1;PENALTIES 0 10 10 ;ABSOLUTE 1;BEFORE_FUNCTION QUADRATIC;AFTER_FUNCTION LINEAR;END_PENALTY_DEFINITION"/>
+        </AddCompositionConstraintMover>
+        <AddCompositionConstraintMover name="Met_penalty">
+			<Comp entry="PENALTY_DEFINITION;TYPE MET;DELTA_START -1;DELTA_END 1;PENALTIES 0 0 5 ;ABSOLUTE 1;BEFORE_FUNCTION LINEAR;AFTER_FUNCTION QUADRATIC;END_PENALTY_DEFINITION"/>
+        </AddCompositionConstraintMover>
+        <ClearConstraintsMover name="clear_all_constraints" />
+    
+        #### minimzation
+        <MinMover name="min_sc" scorefxn="sfxn_16" chi="true" bb="false" jump="0"
+          cartesian="false"
+          type="dfpmin_armijo_nonmonotone"
+          tolerance="0.00001"
+          max_iter="100000" >
+          <MoveMap name="restrictions" bb="false" chi="true" jump="false" />
+        </MinMover>
+    
+        <MinMover name="min_all" scorefxn="sfxn_16" chi="true" bb="true" jump="ALL"
+                cartesian="false"
+                type="dfpmin_armijo_nonmonotone"
+                tolerance="0.00001"
+                max_iter="100000" >
+                <MoveMap name="restrictions" bb="true" chi="true" jump="true"/>
+        </MinMover>
+    
+        <FastRelax name="relax" scorefxn="sfxn_16" repeats="3">
+          <MoveMap name="restrictions" bb="true" chi="true" jump="true"/>
+        </FastRelax>
+    
+        #### Debugging
+        <DumpPdb name="dump_1" fname="before_sap" dir="dump" scorefxn="sfxn_16" />
+        <DumpPdb name="dump_2" fname="after_sap" dir="dump" scorefxn="sfxn_16" />
+      </MOVERS>
+    
+      <FILTERS>
+        #### for packing
+        <CavityVolume name="cav_vol" confidence="0" />
+        <PackStat name="packing" confidence="0" threshold="0.0" chain="0" repeats="10" />
+        <SSShapeComplementarity name="ss_sc" confidence="0" min_sc="0.0" loops="true" helices="true" />
+        <SSShapeComplementarity name="ss_helix" confidence="0" min_sc="0.0" loops="false" helices="true" />
+        <SSShapeComplementarity name="ss_loops" confidence="0" min_sc="0.0" loops="true" helices="false" />
+        <Holes name="network_holes" threshold="2" residue_selector="core_around_hbnet" normalize_per_atom="true" exclude_bb_atoms="true" confidence="0"/>
+        <Holes name="full_holes" confidence="0" threshold="2" exclude_bb_atoms="false" normalize_per_atom="true" />
+        <SSPrediction name="mismatch_probability" threshold="0.6" use_probability="1" mismatch_probability="1" cmd="/software/psipred4/runpsipred_single" use_svm="0" confidence="0"/>
+    
+        #### stats
+        <ResidueCount name="His" residue_types="HIS" confidence="0"/>
+        <ResidueCount name="hb_His" residue_types="HIS" confidence="0" residue_selector="hbnet_residues"/>
+        <ResidueCount name="Ser" residue_types="SER" confidence="0"/>
+        <ResidueCount name="Thr" residue_types="THR" confidence="0"/>
+        <ResidueCount name="Asp" residue_types="ASP" confidence="0"/>
+        <ResidueCount name="Glu" residue_types="GLU" confidence="0"/>
+        <ResidueCount name="Asn" residue_types="ASN" confidence="0"/>
+        <ResidueCount name="Gln" residue_types="GLN" confidence="0"/>
+        <ResidueCount name="Gly" residue_types="GLY" confidence="0"/>
+        <ResidueCount name="Pro" residue_types="PRO" confidence="0"/>
+        <ResidueCount name="Phe" residue_types="PHE" confidence="0"/>
+        <ResidueCount name="Phe_D" residue_types="PHE" confidence="0" residue_selector="D"/>
+        <ResidueCount name="Trp" residue_types="TRP" confidence="0"/>
+        <ResidueCount name="Lys" residue_types="LYS" confidence="0"/>
+        <ResidueCount name="Arg" residue_types="ARG" confidence="0"/>
+        <ResidueCount name="Ala" residue_types="ALA" confidence="0"/>
+        <ResidueCount name="Met" residue_types="MET" confidence="0"/>
+        <Rmsd name="rmsd_to_start" reference_name="pose_start" confidence="0" />
+    
+        #### properties
+        <NetCharge name="charge_bundle" confidence="0"/>
+        <NetCharge name="charge_D" task_operations="calc_D"/>    
+        <TotalSasa name="total_sasa" confidence="0" threshold="0" upper_threshold="1000000000000000" />
+        <TotalSasa name="polar_sasa" confidence="0" threshold="0" upper_threshold="1000000000000000" polar="True" hydrophobic="False" />
+        <TotalSasa name="hydrophobic_sasa" confidence="0" threshold="0" upper_threshold="1000000000000000" polar="False" hydrophobic="True" />
+        <ExposedHydrophobics name="exposed_hydro"/>
+        <BuriedUnsatHbonds name="new_buns_HBNet" scorefxn="sfxn_16" cutoff="4" use_hbnet_behavior="true" print_out_info_to_pdb="true" ignore_surface_res="true" residue_surface_cutoff="20.0" ignore_bb_heavy_unsats="true" residue_selector="hbnet_residues" confidence="0"/>
+        <BuriedUnsatHbonds name="new_buns_sc" scorefxn="sfxn_16" cutoff="0" use_reporter_behavior="true" report_sc_heavy_atom_unsats="true" print_out_info_to_pdb="true" ignore_surface_res="true" residue_surface_cutoff="20.0" confidence="0"/>
+        <BuriedUnsatHbonds name="new_buns_bb" scorefxn="sfxn_16" cutoff="3" use_reporter_behavior="true" report_bb_heavy_atom_unsats="true" print_out_info_to_pdb="true" ignore_surface_res="true" residue_surface_cutoff="20.0" confidence="0"/>
+      </FILTERS>
+    
+      <SIMPLE_METRICS>
+        <SapScoreMetric name="sap"/>
+        <SapScoreMetric name="hydrophob_D" score_selector="D"/>
+        <SapScoreMetric name="hydrophob_core" score_selector="core"/>
+    
+        #### for filtering on intact networks
+        <HbondMetric name="network_hb" residue_selector="hbnet_residues"/>
+        <HbondMetric name="network_His_hb" residue_selector="hbnet_His"/>
+        <ResidueSummaryMetric name="sum_network_hb" metric="network_hb" action="sum"/>
+        <ResidueSummaryMetric name="mean_network_hb" metric="network_hb" action="mean"/>
+        <ResidueSummaryMetric name="sum_network_His_hb" metric="network_His_hb" action="sum"/>
+        <ResidueSummaryMetric name="mean_network_His_hb" metric="network_His_hb" action="mean"/>
+      </SIMPLE_METRICS>
+    
+      <PROTOCOLS>
+        <Add mover="save_start"/>
+    
+        #### Constraints
+        <Add mover="genProfile"/>
+        <Add mover="add_sap"/>          # add surface aggregation propensity constraint --> minimize hydrophobics on surface
+        <Add mover="Phe_penalty"/>      # place Phe on helix D
+        <Add mover="Phe_penalty2"/>     # reduce Phe probability in all helices except D
+        <Add mover="Met_penalty"/>      # reduce amount of Met
+        <Add mover="basic_h_cst"/>
+    
+        #### Design
+        <Add mover="design_all"/>
+    
+        #### Minimize before filters
+        <Add mover="clear_all_constraints"/>  # remove all constraints before minimization
+        <Add mover="min_sc"/>
+        <Add mover="min_all"/>
+    
+        #### filters and metrics
+        <Add filter="rmsd_to_start"/>
+        <Add filter="charge_bundle"/>
+        <Add filter="charge_D"/>
+        <Add filter="cav_vol" />
+        <Add filter="packing" />
+        <Add filter="full_holes" />
+        <Add filter="network_holes" />
+        <Add filter="total_sasa" />
+        <Add filter="polar_sasa" />
+        <Add filter="hydrophobic_sasa" />
+        <Add filter="exposed_hydro"/>
+        <Add filter='new_buns_HBNet'/>
+        <Add filter="new_buns_sc"/>
+        <Add filter='new_buns_bb'/>
+    
+        <Add filter="ss_sc"/>
+        <Add filter="ss_helix" />
+        <Add filter="ss_loops" />
+    
+        <Add filter="Asn"/>
+        <Add filter="Asp"/>
+        <Add filter="Glu"/>
+        <Add filter="Gln"/>
+        <Add filter="Arg"/>
+        <Add filter="Ala"/>
+        <Add filter="Gly"/>
+        <Add filter="His"/>
+        <Add filter="hb_His"/>
+        <Add filter="Phe"/>
+        <Add filter="Phe_D"/>
+        <Add filter="Trp"/>
+        <Add filter="Ser"/>
+        <Add filter="Pro"/>
+        <Add filter="Thr"/>
+        <Add filter="Met"/>
+        <Add filter="Lys"/>
+    
+        <Add metrics="sap" labels="sap"/>
+        <Add metrics="hydrophob_D" labels="hydro_D"/>
+        <Add metrics="hydrophob_core" labels="hydro_core"/>
+    
+        #### hb network filters
+        <Add metrics="sum_network_hb" labels="hb_networks_sum"/>
+        <Add metrics="mean_network_hb" labels="hb_networks_mean"/>
+        <Add metrics="sum_network_His_hb" labels="hb_network_His_sum"/>
+        <Add metrics="mean_network_His_hb" labels="hb_network_His_mean"/>
+      </PROTOCOLS>
+    
+    </ROSETTASCRIPTS>

@@ -1,0 +1,285 @@
+<ROSETTASCRIPTS>
+
+  # design hydrogen bond networks in the core of a four helix protein
+  # helices must be defined as chains A - D
+  # will search for networks in the 'upper region' of the bundle (away from the termini of A and D, where order N-->C is assumed A - B - C - D)
+
+	<SCOREFXNS>
+	   <ScoreFunction name="beta" weights="beta"/>
+  </SCOREFXNS>
+
+	<RESIDUE_SELECTORS> 
+     #### select helices depending on secondary structure
+    <SSElement name="A" selection="1,H"/> 
+    <SSElement name="B" selection="2,H"/> 
+    <SSElement name="C" selection="3,H"/> 
+    <SSElement name="D" selection="4,H"/> 
+
+    #### truncate helices
+    <Slice from="5" name="A_trunc" selector="A" to="-5"/> 
+    <Slice from="5" name="B_trunc" selector="B" to="-5"/> 
+    <Slice from="5" name="C_trunc" selector="C" to="-5"/>
+    <Slice from="5" name="D_trunc" selector="D" to="-5"/>
+
+    <Or name="searchHB">
+        <Slice from="20" to="-5" selector="A"/>
+        <Slice from="5" to="-20" selector="B"/>
+        <Slice from="20" to="-5" selector="C"/>
+        <Slice from="5" to="-20" selector="D"/>
+    </Or>
+
+
+      <Layer name="surface" select_core="false" select_boundary="false" select_surface="true" use_sidechain_neighbors="true" core_cutoff="3.0" surface_cutoff="2.0"/>
+      <Layer name="boundary" select_core="false" select_boundary="true" select_surface="false" use_sidechain_neighbors="true" core_cutoff="3.0" surface_cutoff="2.0"/>
+      <Layer name="core" select_core="true" select_boundary="false" select_surface="false" use_sidechain_neighbors="true" core_cutoff="3.0" surface_cutoff="2.0"/>
+
+     <SecondaryStructure name="helix" overlap="0" minH="3" include_terminal_loops="false" use_dssp="true" ss="H" />
+     <SecondaryStructure name="loop" overlap="0" minH="3" minE="3" include_terminal_loops="true" use_dssp="true" ss="L" />
+
+	   <Layer name="hbnet_core" select_core="true" select_boundary="false" select_surface="false" use_sidechain_neighbors="true" core_cutoff="3.6" />
+     <Not name="not_hbnet_core" selector="hbnet_core"/>
+
+
+     <And name="HBnet_scaffold" selectors="hbnet_core,searchHB" /> #core of truncated A,B,C
+     <Not name="not_HBnet_scaffold" selector="HBnet_scaffold"/>  #region NOT to search for hbnet
+
+     <And name="HBnet_lytic" selectors="hbnet_core,D_trunc" /> #core of D_trunc + hbnet_core
+     <And name="OppositeHelixB" selectors="hbnet_core,B_trunc"/> #core region of B_trunc + hbnet_core
+     <And name="HelixC" selectors="hbnet_core,C_trunc"/> #core region of C_trunc + hbnet_core
+     <And name="HelixA" selectors="hbnet_core,A_trunc"/> #core region of A_trunc + hbnet_core
+
+	</RESIDUE_SELECTORS>
+
+ 	<TASKOPERATIONS>
+	   <InitializeFromCommandline name="init"/>
+	   <IncludeCurrent name="current"/>
+	   <LimitAromaChi2 name="arochi" />
+	   <ExtraRotamersGeneric name="ex1_ex2" ex1="1" ex2="1"/>
+	   <ExtraRotamersGeneric name="ex1" ex1="1"/>
+
+	   ###TaskOperations for HBnets
+
+     <OperateOnResidueSubset name="limit_HBNet_region" selector="not_HBnet_scaffold"> #turns off design and repacking in regions NOT core
+        <PreventRepackingRLT/>
+      </OperateOnResidueSubset>
+
+      #Do not allow His in design for HelixD. only allow design of STNQ polar aa for CORE of HelixD
+      <OperateOnResidueSubset name="HBnet_HelixDRestrict" selector="HBnet_lytic"> 
+        <RestrictAbsentCanonicalAASRLT aas="STNQ"/> # allow polar residues for HBNet to place in scaffold helices
+      </OperateOnResidueSubset> 
+
+      #Do not allow His in design for HelixB. only allow design of STNQ polar aa for CORE of HelixB
+      <OperateOnResidueSubset name="HBnet_OppositeHelixRestrict" selector="OppositeHelixB"> 
+        <RestrictAbsentCanonicalAASRLT aas="STNQ"/> # allow polar residues for HBNet to place in scaffold helices
+      </OperateOnResidueSubset> 
+      #Do not allow His in design for HelixA
+   <OperateOnResidueSubset name="HBnet_HelixARestrict" selector="HelixA"> #only allow design of STNQ polar aa for CORE of HelixC
+        <RestrictAbsentCanonicalAASRLT aas="STNQ"/> # allow polar residues for HBNet to place in scaffold helices
+      </OperateOnResidueSubset> 
+      #Do not allow His in design for HelixC
+      <OperateOnResidueSubset name="HBnet_HelixCRestrict" selector="HelixC"> #only allow design of STNQ polar aa for CORE of HelixC
+        <RestrictAbsentCanonicalAASRLT aas="STNQ"/> # allow polar residues for HBNet to place in scaffold helices
+      </OperateOnResidueSubset> 
+
+     <OperateOnResidueSubset name="ex1_not_core" selector="not_hbnet_core" >
+        <ExtraRotamersGenericRLT ex1="1" />
+     </OperateOnResidueSubset>
+     <OperateOnResidueSubset name="ex1ex2_core" selector="hbnet_core" >
+        <ExtraRotamersGenericRLT ex1="1" ex2="1" />
+     </OperateOnResidueSubset>
+
+        # Generate sequence profile for loops
+    <ConsensusLoopDesign name="loop_profile" include_adjacent_residues="True" use_dssp="true" enrichment_threshold="-0.5" /> 
+
+
+	</TASKOPERATIONS>
+
+	<MOVERS>
+		<HBNetStapleInterface scorefxn="beta" name="hbMover"
+                hb_threshold="-0.7" 
+                design_residues="STNHQ"
+                minimize="false" 
+                min_helices_contacted_by_network="4"
+                verbose="false"
+                write_network_pdbs="0"
+                min_network_size="3"
+                max_network_size="4"
+                max_unsat_Hpol="0"
+                write_cst_files="false"
+                monte_carlo="true"
+                total_num_mc_runs="200000"
+                min_percent_hbond_capacity="0.75"
+                at_least_one_net_fully_satisfied="true"
+                pH_His="true"
+                min_networks_per_pose="3"
+                max_networks_per_pose="4"
+                use_pdb_numbering='true'
+                task_operations="limit_HBNet_region,HBnet_OppositeHelixRestrict,HBnet_HelixDRestrict,arochi,ex1ex2_core,ex1_not_core"/>
+
+                <MultiplePoseMover name="MPM_Filters" max_input_poses="10">
+                    <ROSETTASCRIPTS>
+                      <SCOREFXNS>
+                              <ScoreFunction name="beta" weights="beta"/>
+                      </SCOREFXNS>
+
+                      <RESIDUE_SELECTORS>
+                        <SSElement name="D" selection="4,H"/>
+                        <Not name="not_D" selector="D"/>
+                        <Slice from="5" name="D_trunc" selector="D" to="-5"/>
+                        <Not name="not_D_trunc" selector="D_trunc"/>
+
+                        <Layer name="core" select_core="true" select_boundary="false" select_surface="false" use_sidechain_neighbors="true" core_cutoff="3.0" surface_cutoff="2.0"/>
+
+                        <ResidueName name="Asparagine" residue_name3="ASN"/>
+                        <ResidueName name="Histidine" residue_name3="HIS"/>
+                       <ResidueName name="Glutamine" residue_name3="GLN"/>
+                       <ResidueName name="Aspartate" residue_name3="ASP"/>
+                       <ResidueName name="Glutamate" residue_name3="GLU"/>
+                       <ResidueName name="Serine" residue_name3="SER"/>
+                       <ResidueName name="Threonine" residue_name3="THR"/>
+                   
+                       <Or name="Asn_Gln" selectors="Asparagine,Glutamine"/>
+                       <Or name="Asp_Glu" selectors="Aspartate,Glutamate"/>
+                       <Or name="Ser_Thr" selectors="Serine,Threonine"/>
+                      </RESIDUE_SELECTORS>
+
+                      <TASKOPERATIONS>
+                        <OperateOnResidueSubset name="just_D" selector="not_D">
+                          <PreventRepackingRLT/>
+                        </OperateOnResidueSubset>
+                      </TASKOPERATIONS>
+                      
+                      <MOVERS>
+                        
+                        <ConnectChainsMover name="build_loops" chain_connections="[A+B+C+D]" loopLengthRange="2,5" allowed_loop_abegos="AGBA,ABBA,AGBBA,ABABA,ABBBA,AGABBA,ABBBBA,AGBBBA" resAdjustmentRangeSide1="-3,3" resAdjustmentRangeSide2="-3,3" RMSthreshold="0.6"/>
+
+                        <DumpPdb name="dump" fname="before_loop.pdb" scorefxn="beta" tag_time="1" />
+                        <DumpPdb name="dumplooped" fname="after_loop.pdb" scorefxn="beta" tag_time="1" />
+                      </MOVERS>
+
+
+                      <FILTERS>
+                                <ResidueCount name="ala_count" max_residue_count="30" residue_types="ALA" confidence="0"/>
+                                <ResidueCount name="HIS_count" max_residue_count="8" residue_types="HIS" confidence="0"/>
+
+                                # new residue count filters
+                                <ResidueCount confidence="0" name="HIS" residue_types="HIS"/>
+                                <ResidueCount confidence="0" name="SER" residue_types="SER"/>
+                                <ResidueCount confidence="0" name="THR" residue_types="THR"/>
+                                <ResidueCount confidence="0" name="ASP" residue_types="ASP"/>
+                                <ResidueCount confidence="0" name="GLU" residue_types="GLU"/>
+                                <ResidueCount confidence="0" name="ASN" residue_types="ASN"/>
+                                <ResidueCount confidence="0" name="GLN" residue_types="GLN"/>
+                                
+                                <SSShapeComplementarity name="ss_sc" verbose="0" loops="0" helices="1" confidence="0" min_sc="0.6"/> # best are > 0.7 cutoff
+                          
+                                <BuriedUnsatHbonds name="new_buns_sc_heavy" scorefxn="hard" cutoff="0" use_reporter_behavior="true" report_sc_heavy_atom_unsats="true" print_out_info_to_pdb="true" ignore_surface_res="true" residue_surface_cutoff="20.0" confidence="0"/>
+                                <BuriedUnsatHbonds name="new_buns_bb_heavy" scorefxn="hard" cutoff="3" use_reporter_behavior="true" report_bb_heavy_atom_unsats="true" print_out_info_to_pdb="true" ignore_surface_res="true" residue_surface_cutoff="20.0" confidence="0"/>
+
+                                <ExposedHydrophobics name="exposedhydrop" sasa_cutoff="20" threshold="0" confidence="0"/>
+ 
+		                            <ResidueCount name="His_helix_D" confidence="0" residue_types="HIS" residue_selector="D"/> # number of His on helix D
+		                      
+                                <NetCharge name="charge_full" confidence="0"/>
+		                            <NetCharge name="charge_D" confidence="0" task_operations="just_D"/>
+
+		                            <CavityVolume name="cav_vol" confidence="0"/>
+                      </FILTERS>
+
+                      <SIMPLE_METRICS>
+                        <HbondMetric name="His_hb" residue_selector="Histidine"/> 							                            # number of H-bonds formed with Histidines
+                        <HbondMetric name="His_His" residue_selector="Histidine" residue_selector2="Histidine"/>		      	        # number of H-bonds between 2 Histidines
+                        <HbondMetric name="His_D" residue_selector="Histidine" residue_selector2="D_trunc"/>	                        # number of H-bonds between His and helix D
+                        <HbondMetric name="D-hb" residue_selector="D" residue_selector2="not_D_trunc"/> 		                        # number of H-bonds between helix D and helices B or C
+                        <HbondMetric name="core_hb" residue_selector="core"/>												            # total number of H-bonds formed by core residues
+                        <HbondMetric name="Asn_Gln_hb" residue_selector="Asn_Gln"/>								                        # number of H-bonds of Asn and Gln
+                        <HbondMetric name="Ser_Thr_hb" residue_selector="Ser_Thr"/>                                                     # number of H-bonds of Ser and Thr
+                        <HbondMetric name="Asp_Glu_hb" residue_selector="Asp_Glu"/>                                                     # number of H-bonds of Asp and Glu
+
+                        <HbondMetric name="Ser_Ser" residue_selector="Serine" residue_selector2="Serine"/>      
+                        <HbondMetric name="Asn_Asn" residue_selector="Asparagine" residue_selector2="Asparagine"/> 
+                        <HbondMetric name="Gln_Gln" residue_selector="Glutamine" residue_selector2="Glutamine"/>  
+                        <ResidueSummaryMetric name="sum_Asn_Asn" metric="Asn_Asn" action="sum"/>                   
+                        <ResidueSummaryMetric name="sum_Gln_Gln" metric="Gln_Gln" action="sum"/>                  
+                        <ResidueSummaryMetric name="sum_Ser_Ser" metric="Ser_Ser" action="sum"/>              
+                    
+                        <ResidueSummaryMetric name="mean_His_hb" metric="His_hb" action="mean"/>
+                        <ResidueSummaryMetric name="mean_core_Asp_Glu" metric="Asp_Glu_hb" action="mean"/>
+                        <ResidueSummaryMetric name="mean_core_Asn_Gln" metric="Asn_Gln_hb" action="mean"/>
+                        <ResidueSummaryMetric name="mean_core_Ser_Thr" metric="Ser_Thr_hb" action="mean"/>
+                    
+                        <ResidueSummaryMetric name="sum_His_hb" metric="His_hb" action="sum"/>
+                        <ResidueSummaryMetric name="sum_His_His" metric="His_His" action="sum"/>
+                        <ResidueSummaryMetric name="sum_His_D" metric="His_D" action="sum"/>
+                        <ResidueSummaryMetric name="sum_D-hb" metric="D-hb" action="sum"/>
+                        <ResidueSummaryMetric name="sum_core_hb" metric="core_hb" action="sum"/>
+                        <ResidueSummaryMetric name="sum_Asp_Glu" metric="Asp_Glu_hb" action="sum"/>
+                        <ResidueSummaryMetric name="sum_Asn_Gln" metric="Asn_Gln_hb" action="sum"/>
+                        <ResidueSummaryMetric name="sum_Ser_Thr" metric="Ser_Thr_hb" action="sum"/>
+                    
+                        <SapScoreMetric name="hydrophob_full"/>
+                        <SapScoreMetric name="hydrophob_D" score_selector="D"/>
+                        <SapScoreMetric name="hydrophob_core" score_selector="core"/>
+                      </SIMPLE_METRICS>
+
+                      <PROTOCOLS>
+                            
+                        ##Filters 
+                        <Add filter="ss_sc"/>
+                        <Add filter="HIS"/>
+                        # new filters
+                        <Add filter="SER" />
+                        <Add filter="THR"/>
+                        <Add filter="ASN"/>
+                        <Add filter="GLN"/>
+                        <Add filter="ASP"/>
+                        <Add filter="GLU"/>
+                        ####
+                        <Add filter="new_buns_sc_heavy"/>
+                        <Add filter="new_buns_bb_heavy"/>
+                        <Add filter="exposedhydrop"/>
+
+                        <Add filter="His_helix_D"/>
+                        <Add filter="charge_full"/>
+                        <Add filter="charge_D"/>
+                        <Add filter="cav_vol"/>
+
+                        <Add metrics="mean_His_hb" labels="mean_His_hb"/>
+		                    <Add metrics="mean_core_Ser_Thr" labels="mean_Ser_Thr_hb"/>
+		                    <Add metrics="mean_core_Asp_Glu" labels="mean_Asp_Glu_hb"/>
+		                    <Add metrics="mean_core_Asn_Gln" labels="mean_Asn_Gln_hb"/>
+
+		                    <Add metrics="sum_His_hb" labels="sum_His_hb"/>
+		                    <Add metrics="sum_His_His" labels="sum_His-His_hb"/>
+		                    <Add metrics="sum_His_D" labels="sum_His_D_hb"/>
+		                    <Add metrics="sum_D-hb" labels="sum_D-hb"/>
+		                    <Add metrics="sum_core_hb" labels="sum_core_hb"/>
+		                    <Add metrics="sum_Ser_Thr" labels="sum_Ser_Thr_hb"/>
+		                    <Add metrics="sum_Asn_Gln" labels="sum_Asn_Gln_hb"/>
+		                    <Add metrics="sum_Asp_Glu" labels="sum_Asp_Glu_hb"/>
+
+		                    <Add metrics="hydrophob_full" labels="hydro_full"/>
+		                    <Add metrics="hydrophob_D" labels="hydro_D"/>
+		                    <Add metrics="hydrophob_core" labels="hydro_core"/>
+
+                        <Add metrics="sum_Ser_Ser" labels="sum_Ser_Ser_hb"/>
+                        <Add metrics="sum_Asn_Asn" labels="sum_Asn_Asn_hb"/>
+                        <Add metrics="sum_Gln_Gln" labels="sum_Gln_Gln_hb"/>
+                      </PROTOCOLS>
+
+                    </ROSETTASCRIPTS>
+                </MultiplePoseMover>
+
+  </MOVERS>
+
+  <FILTERS>
+    <ScoreType name="fa_rep" score_type="fa_rep" threshold="300" scorefxn="beta" confidence="1"/> # remove designs with high steric repulsion
+  </FILTERS>
+
+  <PROTOCOLS>
+    <Add filter="fa_rep" />
+    <Add mover="hbMover" />
+    <Add mover="MPM_Filters" />
+  </PROTOCOLS>
+
+</ROSETTASCRIPTS>

@@ -1,0 +1,28 @@
+<ROSETTASCRIPTS>
+
+  # remember to pass the flag -indexed_structure_store:fragment_store in the command line when running this script!
+  
+	<SCOREFXNS>
+	   <ScoreFunction name="beta" weights="beta"/>
+  </SCOREFXNS>
+
+	<RESIDUE_SELECTORS>
+	</RESIDUE_SELECTORS>
+
+ 	<TASKOPERATIONS>
+	</TASKOPERATIONS>
+
+ <MOVERS>     
+      <ConnectChainsMover name="build_loops" chain_connections="[A+B+C+D]" loopLengthRange="2,5" allowed_loop_abegos="AGBA,ABBA,AGBBA,ABABA,ABBBA,AGABBA,ABBBBA,AGBBBA" resAdjustmentRangeSide1="-3,3" resAdjustmentRangeSide2="-3,3" RMSthreshold="0.6"/>
+  </MOVERS>
+
+
+  <FILTERS>
+  </FILTERS>
+
+  <PROTOCOLS>
+    <Add mover="build_loops"/>
+  </PROTOCOLS>
+
+
+</ROSETTASCRIPTS>
